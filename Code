@@ -1,0 +1,286 @@
+#include <EtherCard.h>
+#include <Servo.h>
+#include <LiquidCrystal_I2C.h>
+#include <Wire.h>
+#define servoPin 5
+#define alertLedPin 4
+#define safePin 2
+#define row1Pin A0
+#define row2Pin A1
+#define row3Pin A2
+#define row4Pin A3
+#define pic1Pin 6
+#define pic2Pin 7
+// CONFIGURACION DE INTERNET NO FUNCIONAL EN SIMULACION
+/*
+  // ethernet interface mac address, must be unique on the LAN
+  static byte mymac[] = { 0x74,0x69,0x69,0x2D,0x30,0x31 };
+
+  byte Ethernet::buffer[700];
+  static uint32_t timer;
+
+  const char website[] PROGMEM = "http://arduinojson.org/example.json";
+*/
+Servo servoMotor;
+LiquidCrystal_I2C lcd(0x27, 16, 2); // set the LCD address to 0x27 for a 16 chars and 2 line display
+
+int Time = 0;
+int rentTime = 10;
+unsigned long oldTime = 0;
+int estado = 0;
+
+String readString;
+
+void setup() {
+  // initialize the lcd
+  lcd.init();
+  lcd.backlight();
+
+
+  //Servo
+  servoMotor.attach(servoPin);
+  servoMotor.write(90);
+
+  pinMode(alertLedPin, OUTPUT);
+  pinMode(pic1Pin, OUTPUT);
+  pinMode(pic2Pin, OUTPUT);
+  pinMode(safePin, INPUT);
+  pinMode(row1Pin, INPUT);
+  pinMode(row2Pin, INPUT);
+  pinMode(row3Pin, INPUT);
+  pinMode(row4Pin, INPUT);
+
+  conectar();
+}
+String timeFormat() { // Formateo del tiempo en segundos a hh:mm:ss
+  int horas = (Time / 3600);
+  int minutos = ((Time - horas * 3600) / 60);
+  int segundos = Time - (horas * 3600 + minutos * 60);
+  //
+  //String(Time)+ ":"+ String(oldTime/1000)+":"+String(millis()/1000);
+  return String(horas) + ":" + String(minutos) + ":" + String(segundos);
+}
+void LCD_Update() {//Control para el LCD durante la RENTA
+  if (Time >= 0) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Tiempo restante:");
+    lcd.setCursor(4, 1);
+    lcd.print(timeFormat());
+  } else {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Devolver Equipo");
+    lcd.setCursor(4, 1);
+    lcd.print(timeFormat());
+  }
+
+}
+void lock() {// CONTROL PARA EL CIERRE DE LA CAJA
+
+  if (digitalRead(safePin) == HIGH) {
+    if (verify() == true) {
+      servoMotor.write(90);//CIERRA LA CAJA
+      digitalWrite(alertLedPin, LOW);
+      digitalWrite(pic1Pin, LOW);
+      digitalWrite(pic2Pin, LOW); //APAGA LA ALERTA
+      estado = 0; //regresamos al estado inicial
+      post();
+    }
+    else {
+      digitalWrite(pic1Pin, HIGH); //Enciende la alerta 1 vez
+      delay(200);
+      digitalWrite(pic1Pin, LOW); //APAGA LA ALERTA
+
+    }
+
+  }
+
+}
+bool verify() {//Validar el equipo en posicion
+  if (digitalRead(row1Pin) == HIGH && digitalRead(row2Pin) == HIGH && digitalRead(row3Pin) == HIGH && digitalRead(row4Pin) == HIGH ) {
+    return true;
+  } else {
+    return false;
+  }
+
+}
+void setTime() { //establecer el tiempo de inicio de la renta
+  oldTime = millis();
+  Time = 0;
+}
+void timeUpdate() { // en caso que se obtenga la hora de una fuente externa como RTC, modificar el codigo
+  Time = rentTime - ((millis() - oldTime) / 1000);
+
+}
+void conectar() { //parte del setup para la conexion a internet
+  Serial.begin(9600);
+  //Serial.println("[Security 8-BOX]\n");
+
+
+
+  /*
+
+    Serial.println("[Security 8-BOX]\n");
+
+    // Change 'SS' to your Slave Select pin, if you arn't using the default pin
+    if (ether.begin(sizeof Ethernet::buffer, mymac, SS) == 0)
+      Serial.println(F("Failed to access Ethernet controller"));
+    if (!ether.dhcpSetup())
+      Serial.println(F("DHCP failed"));
+
+    ether.printIp("IP:  ", ether.myip);
+    ether.printIp("GW:  ", ether.gwip);
+    ether.printIp("DNS: ", ether.dnsip);
+
+    #if 1
+    // use DNS to resolve the website's IP address
+    if (!ether.dnsLookup(website))
+      Serial.println("DNS failed");
+    #elif 2
+    // if website is a string containing an IP address instead of a domain name,
+    // then use it directly. Note: the string can not be in PROGMEM.
+    char websiteIP[] = "192.168.1.1";
+    ether.parseIp(ether.hisip, websiteIP);
+    #else
+    // or provide a numeric IP address instead of a string
+    byte hisip[] = { 192,168,1,1 };
+    ether.copyIp(ether.hisip, hisip);
+    #endif
+
+    ether.printIp("SRV: ", ether.hisip);
+
+  */
+  //String a="{\"type\":\"message\",\"content\":\"INICIAR\"}"  ;
+
+}
+void unlock() { //Desbloquea la caja e inicia el alquiler
+
+  servoMotor.write(0);//caja abierta
+  lcd.setCursor(1, 1);
+  lcd.print("Mesa 1-Abierta");//mensaje del LCD
+  while (digitalRead(safePin) == HIGH) {}// espera para que el usuario abra la caja y retire el equipo
+
+  Serial.println("Inicio del alquiler: ");
+  estado = 1;// actualizamos el estado del sistema
+  setTime();
+}
+void request() { //busca la orden para el inicio de la renta
+  /* Control ONLINE NO FUNCIONANDO EN SIMULACION
+    ether.packetLoop(ether.packetReceive());
+
+    if (millis() > timer) {
+    timer = millis() + 5000;
+    Serial.println();
+    Serial.print("<<< REQ ");
+    ether.browseUrl(PSTR("/test/"), "dot.html", website, my_callback);
+    ether.persistTcpConnection(true);
+    }*/
+
+  if (Serial.available())  {
+    char c = Serial.read();  //gets one byte from serial buffer
+    if (String(c) == ";") {
+
+
+      if (readString == "{\"type\":\"message\",\"content\":\"INICIAR\"}") {
+
+        unlock();
+
+      }
+
+      readString = ""; //clears variable for new input
+    }
+    else {
+      readString += c; //makes the string readString
+    }
+  }
+
+  /*delay(4000);
+    if (true) {
+    unlock();
+    }*/
+}
+void post() { //enviar datos a internet
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("EXTRA TIME (s):");
+  lcd.setCursor(4, 1);
+  if (Time < 0) {
+    lcd.print(String(Time * -1));
+  } else {
+    lcd.print("0");
+  }
+  delay(2000);
+  Serial.println("Equipo entregado");
+
+}
+/* metodo del modo ONLINE
+  static void my_callback (byte status, word off, word len) {
+  //Serial.println(">>>");
+  Ethernet::buffer[off + len] = 0;
+  char* fullResponse;
+  fullResponse = (char*) Ethernet::buffer + off;
+  Serial.println(fullResponse);
+  //Serial.println("...");
+  }
+*/
+void alarmsControl() { // Control de las alarmas del sistema en funcion del tiempo restante
+  if (Time >= 30) {//Alertas apagadas
+    digitalWrite(alertLedPin, LOW);
+    digitalWrite(pic1Pin, LOW);
+    digitalWrite(pic2Pin, LOW);
+  }
+  else if (Time >= 0) {
+    digitalWrite(alertLedPin, HIGH);//LED DE ALERTA ENCENDIDO
+    digitalWrite(pic1Pin, HIGH);//MELODIA 1 ACTIVADA
+    digitalWrite(pic2Pin, LOW);
+    if (Time == 0) {
+      Serial.println("Se termino el tiempo de alquiler, devolver el equipo.");
+      delay(1000);
+    }
+  }
+  else {
+    digitalWrite(alertLedPin, HIGH);//LED DE ALERTA ENCENDIDO
+    digitalWrite(pic1Pin, LOW);
+    digitalWrite(pic2Pin, HIGH);// MELODIA 2 ACTIVADA
+
+  }
+}
+void loop()
+{
+  switch (estado) {
+    case 0:// Estado inicial - caja cerrada
+      lcd.clear();
+      lcd.setCursor(1, 0);
+      lcd.print("Security 8-BOX");
+
+      if (digitalRead(safePin) == LOW || verify()== false   ) {//Si se encuentra abierto cuando deberia estar cerrada - Error
+        digitalWrite(alertLedPin, HIGH);
+        lcd.setCursor(1, 1);
+        lcd.print("Mesa 1-Averiada");
+        delay(100);
+        digitalWrite(alertLedPin, LOW);
+      } else {                          // Si no hay ERROR, solicitamos Alquiler
+        lcd.setCursor(1, 1);
+        lcd.print("Mesa 1-Cerrada");
+        request();
+      }
+
+
+      delay(100);
+      break;
+    case 1:// Renta activa - caja abierta
+      timeUpdate();
+      LCD_Update();
+      alarmsControl();
+      lock();
+      delay(100);
+      break;
+    default:
+      // statements
+      break;
+  }
+
+}
+
